@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Unreleased
+
+### Auth
+
+* Added ability to authenticate users
+  * `Kreait\Firebase\Auth::authenticateUser($userOrUuid)`
+  * `Kreait\Firebase\Auth::authenticateUserWithCustomToken($customToken)`
+  * `Kreait\Firebase\Auth::authenticateUserWithEmailAndClearTextPassword($email, $clearTextPassword)`
+  * `Kreait\Firebase\Auth::authenticateUserWithRefreshToken($refreshToken)`
+
 ## 4.40.1 - 2020-02-29
 
 * It was not possible to discover Service Accounts stored as JSON string in an environment variable.

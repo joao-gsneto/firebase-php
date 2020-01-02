@@ -2,16 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Kreait\Firebase\Tests\Unit\Auth\CreateActionCodeLink;
+namespace Kreait\Firebase\Tests\Unit\Auth\AuthenticateUserWithCustomToken;
 
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\TransferException;
 use GuzzleHttp\Psr7\Response;
-use Kreait\Firebase\Auth\ActionCodeSettings\ValidatedActionCodeSettings;
-use Kreait\Firebase\Auth\CreateActionLink;
-use Kreait\Firebase\Auth\CreateActionLink\FailedToCreateActionLink;
-use Kreait\Firebase\Auth\CreateActionLink\GuzzleApiClientHandler;
-use Kreait\Firebase\Value\Email;
+use Kreait\Firebase\Auth\AuthenticateUserWithCustomToken;
+use Kreait\Firebase\Auth\AuthenticateUserWithCustomToken\FailedToAuthenticateUserWithCustomToken;
+use Kreait\Firebase\Auth\AuthenticateUserWithCustomToken\GuzzleApiClientHandler;
 use PHPUnit\Framework\TestCase;
 use Prophecy\Argument;
 
@@ -22,7 +20,7 @@ final class GuzzleApiClientHandlerTest extends TestCase
 {
     private $client;
 
-    /** @var CreateActionLink */
+    /** @var AuthenticateUserWithCustomToken */
     private $action;
 
     /** @var GuzzleApiClientHandler */
@@ -31,9 +29,9 @@ final class GuzzleApiClientHandlerTest extends TestCase
     protected function setUp()
     {
         $this->client = $this->prophesize(ClientInterface::class);
-        $this->action = CreateActionLink::new('SOME_TYPE', new Email('user@domain.tld'), ValidatedActionCodeSettings::empty());
+        $this->action = AuthenticateUserWithCustomToken::fromValue('custom-token');
 
-        $this->handler = new GuzzleApiClientHandler($this->client->reveal());
+        $this->handler = new AuthenticateUserWithCustomToken\GuzzleApiClientHandler($this->client->reveal());
     }
 
     /** @test */
@@ -41,7 +39,7 @@ final class GuzzleApiClientHandlerTest extends TestCase
     {
         $this->client->send(Argument::cetera())->willThrow(new TransferException('Something happened'));
 
-        $this->expectException(FailedToCreateActionLink::class);
+        $this->expectException(AuthenticateUserWithCustomToken\FailedToAuthenticateUserWithCustomToken::class);
         $this->handler->handle($this->action);
     }
 
@@ -50,7 +48,7 @@ final class GuzzleApiClientHandlerTest extends TestCase
     {
         $this->client->send(Argument::cetera())->willReturn(new Response(400));
 
-        $this->expectException(FailedToCreateActionLink::class);
+        $this->expectException(FailedToAuthenticateUserWithCustomToken::class);
         $this->handler->handle($this->action);
     }
 
@@ -59,16 +57,7 @@ final class GuzzleApiClientHandlerTest extends TestCase
     {
         $this->client->send(Argument::cetera())->willReturn(new Response(200, [], ','));
 
-        $this->expectException(FailedToCreateActionLink::class);
-        $this->handler->handle($this->action);
-    }
-
-    /** @test */
-    public function it_fails_on_unexpected_data()
-    {
-        $this->client->send(Argument::cetera())->willReturn(new Response(200, [], '{"no_oob_code": "nope"}'));
-
-        $this->expectException(FailedToCreateActionLink::class);
+        $this->expectException(FailedToAuthenticateUserWithCustomToken::class);
         $this->handler->handle($this->action);
     }
 
@@ -80,7 +69,7 @@ final class GuzzleApiClientHandlerTest extends TestCase
         try {
             $this->handler->handle($this->action);
             $this->fail('An exception should have been thrown');
-        } catch (FailedToCreateActionLink $e) {
+        } catch (FailedToAuthenticateUserWithCustomToken $e) {
             $this->assertSame($this->action, $e->action());
             $this->assertSame($response, $e->response());
         }

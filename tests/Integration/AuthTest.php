@@ -88,21 +88,6 @@ class AuthTest extends IntegrationTestCase
         $this->auth->deleteUser($user->uid);
     }
 
-    public function testSendEmailVerification()
-    {
-        /** @noinspection NonSecureUniqidUsageInspection */
-        $uniqid = \uniqid();
-        $email = "{$uniqid}@domain.tld";
-        $password = 'my password';
-
-        $user = $this->auth->createUserWithEmailAndPassword($email, $password);
-
-        $this->auth->sendEmailVerification($user->uid, 'http://localhost', 'de');
-
-        $this->auth->deleteUser($user->uid);
-        $this->addToAssertionCount(1);
-    }
-
     public function testGetEmailVerificationLink()
     {
         $user = $this->createUserWithEmailAndPassword();
@@ -125,19 +110,21 @@ class AuthTest extends IntegrationTestCase
         $this->deleteUser($user);
     }
 
-    public function testSendPasswordResetEmail()
+    public function testSendEmailVerificationLinkToUnknownUser()
     {
-        /** @noinspection NonSecureUniqidUsageInspection */
-        $uniqid = \uniqid();
-        $email = "{$uniqid}@domain.tld";
-        $password = 'my password';
+        $this->expectException(FailedToSendActionLink::class);
+        $this->auth->sendEmailVerificationLink('unknown@domain.tld');
+    }
 
-        $user = $this->auth->createUserWithEmailAndPassword($email, $password);
+    public function testSendEmailVerificationLinkToDisabledUser()
+    {
+        $user = $this->createUserWithEmailAndPassword();
+        $this->auth->disableUser($user->uid);
 
-        $this->auth->sendPasswordResetEmail($user->email, 'http://localhost', 'de');
+        $this->expectException(FailedToSendActionLink::class);
+        $this->auth->sendEmailVerificationLink((string) $user->email);
 
-        $this->auth->deleteUser($user->uid);
-        $this->addToAssertionCount(1);
+        $this->deleteUser($user);
     }
 
     public function testGetPasswordResetLink()
@@ -461,5 +448,83 @@ class AuthTest extends IntegrationTestCase
     {
         $this->expectException(InvalidOobCode::class);
         $this->auth->verifyPasswordResetCode('invalid');
+    }
+
+    public function testAuthenticateUser()
+    {
+        $user = $this->auth->createAnonymousUser();
+
+        $result = $this->auth->authenticateUser($user);
+
+        $this->assertInstanceOf(Auth\IdToken::class, $idToken = $result->idToken());
+        $this->assertFalse($idToken->isExpired());
+        $this->assertInstanceOf(Auth\RefreshToken::class, $refreshToken = $result->refreshToken());
+        $this->assertFalse($refreshToken->isExpired());
+
+        $token = $this->auth->verifyIdToken($idToken->toString());
+        $this->assertSame($user->uid, $token->getClaim('sub', false));
+
+        $this->auth->deleteUser($user->uid);
+    }
+
+    public function testAuthenticateUserWithCustomToken()
+    {
+        $user = $this->auth->createAnonymousUser();
+
+        $customToken = $this->auth->createCustomToken($user->uid);
+
+        $result = $this->auth->authenticatUserWithCustomToken($customToken);
+        $this->assertInstanceOf(Auth\IdToken::class, $idToken = $result->idToken());
+        $this->assertFalse($idToken->isExpired());
+        $this->assertInstanceOf(Auth\RefreshToken::class, $refreshToken = $result->refreshToken());
+        $this->assertFalse($refreshToken->isExpired());
+
+        $token = $this->auth->verifyIdToken($idToken->toString());
+        $this->assertSame($user->uid, $token->getClaim('sub', false));
+
+        $this->auth->deleteUser($user->uid);
+    }
+
+    public function testAuthenticateUserWithRefreshToken()
+    {
+        $user = $this->auth->createAnonymousUser();
+
+        // We need to sign in once to get a refresh token
+        $firstRefreshToken = $this->auth->authenticateUser($user)->refreshToken();
+        $this->assertInstanceOf(Auth\RefreshToken::class, $firstRefreshToken);
+
+        $result = $this->auth->authenticateUserWithRefreshToken($firstRefreshToken);
+
+        $this->assertInstanceOf(Auth\IdToken::class, $idToken = $result->idToken());
+        $this->assertFalse($idToken->isExpired());
+        $this->assertInstanceOf(Auth\AccessToken::class, $accessToken = $result->accessToken());
+        $this->assertFalse($accessToken->isExpired());
+        $this->assertInstanceOf(Auth\RefreshToken::class, $secondRefreshToken = $result->refreshToken());
+        $this->assertFalse($secondRefreshToken->isExpired());
+
+        $token = $this->auth->verifyIdToken($idToken->toString());
+        $this->assertSame($user->uid, $token->getClaim('sub', false));
+
+        $this->auth->deleteUser($user->uid);
+    }
+
+    public function testAuthenticateUserWithEmailAndPassword()
+    {
+        $email = \uniqid('', false).'@domain.tld';
+        $password = 'my-perfect-password';
+
+        $user = $this->createUserWithEmailAndPassword($email, $password);
+
+        $result = $this->auth->authenticateUserWithEmailAndClearTextPassword($email, $password);
+
+        $this->assertInstanceOf(Auth\IdToken::class, $idToken = $result->idToken());
+        $this->assertFalse($idToken->isExpired());
+        $this->assertInstanceOf(Auth\RefreshToken::class, $refreshToken = $result->refreshToken());
+        $this->assertFalse($refreshToken->isExpired());
+
+        $token = $this->auth->verifyIdToken($idToken->toString());
+        $this->assertSame($user->uid, $token->getClaim('sub', false));
+
+        $this->auth->deleteUser($user->uid);
     }
 }

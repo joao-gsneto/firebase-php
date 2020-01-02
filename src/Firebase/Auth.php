@@ -15,10 +15,20 @@ use Generator;
 use Kreait\Firebase\Auth\ActionCodeSettings;
 use Kreait\Firebase\Auth\ActionCodeSettings\ValidatedActionCodeSettings;
 use Kreait\Firebase\Auth\ApiClient;
+use Kreait\Firebase\Auth\AuthenticateUser;
+use Kreait\Firebase\Auth\AuthenticateUser\FailedToAuthenticateUser;
+use Kreait\Firebase\Auth\AuthenticateUserWithCustomToken;
+use Kreait\Firebase\Auth\AuthenticateUserWithCustomToken\FailedToAuthenticateUserWithCustomToken;
+use Kreait\Firebase\Auth\AuthenticateUserWithEmailAndClearTextPassword;
+use Kreait\Firebase\Auth\AuthenticateUserWithEmailAndClearTextPassword\FailedToAuthenticateUserWithEmailAndClearTextPassword;
+use Kreait\Firebase\Auth\AuthenticateUserWithRefreshToken;
+use Kreait\Firebase\Auth\AuthenticateUserWithRefreshToken\FailedToAuthenticateUserWithRefreshToken;
+use Kreait\Firebase\Auth\AuthenticationResult;
 use Kreait\Firebase\Auth\CreateActionLink;
 use Kreait\Firebase\Auth\CreateActionLink\FailedToCreateActionLink;
 use Kreait\Firebase\Auth\IdTokenVerifier;
 use Kreait\Firebase\Auth\LinkedProviderData;
+use Kreait\Firebase\Auth\RefreshToken;
 use Kreait\Firebase\Auth\SendActionLink;
 use Kreait\Firebase\Auth\SendActionLink\FailedToSendActionLink;
 use Kreait\Firebase\Auth\UserRecord;
@@ -301,6 +311,7 @@ class Auth
     /**
      * @deprecated 4.37.0 Use {@see \Kreait\Firebase\Auth::sendEmailVerificationLink()} instead.
      * @see sendEmailVerificationLink()
+     * @codeCoverageIgnore
      *
      * @param Uid|string $uid
      * @param UriInterface|string|null $continueUrl
@@ -327,6 +338,7 @@ class Auth
     /**
      * @deprecated 4.37.0 Use {@see \Kreait\Firebase\Auth::sendPasswordResetLink()} instead.
      * @see sendPasswordResetLink()
+     * @codeCoverageIgnore
      *
      * @param Email|mixed $email
      * @param UriInterface|string|null $continueUrl
@@ -397,12 +409,20 @@ class Auth
             }
 
             try {
-                $idTokenString = $this->getIdTokenStringForUserByUid($user->uid);
+                $signInResult = $this->authenticateUser($user);
             } catch (Throwable $e) {
                 throw new FailedToSendActionLink($e->getMessage(), $e->getCode(), $e);
             }
 
-            $sendAction = $sendAction->withIdTokenString($idTokenString);
+            if (!($idToken = $signInResult->idToken())) {
+                // @codeCoverageIgnoreStart
+                // This only happens if the response on Google's side has changed
+                // If it does, the tests will fail, but we don't have to cover that
+                throw new FailedToSendActionLink("Failed to send action link: Unable to retrieve ID token for user assigned to email {$email}");
+                // @codeCoverageIgnoreEnd
+            }
+
+            $sendAction = $sendAction->withIdTokenString($idToken->toString());
         }
 
         (new SendActionLink\GuzzleApiClientHandler($this->client))->handle($sendAction);
@@ -733,6 +753,63 @@ class Auth
     }
 
     /**
+     * @param UserRecord|Uid|string $user
+     *
+     * @throws FailedToAuthenticateUser
+     */
+    public function authenticateUser($user, array $claims = null): AuthenticationResult
+    {
+        $claims = $claims ?? [];
+        $uid = $user instanceof UserRecord ? $user->uid : (string) $user;
+
+        $action = AuthenticateUser::withUid($uid)->withClaims($claims);
+
+        return (new AuthenticateUser\GuzzleApiClientHandler($this->client, $this->tokenGenerator))
+            ->handle($action);
+    }
+
+    /**
+     * @param Token|string $token
+     *
+     * @throws FailedToAuthenticateUserWithCustomToken
+     */
+    public function authenticatUserWithCustomToken($token): AuthenticationResult
+    {
+        return (new AuthenticateUserWithCustomToken\GuzzleApiClientHandler($this->client))
+            ->handle(AuthenticateUserWithCustomToken::fromValue((string) $token));
+    }
+
+    /**
+     * @param RefreshToken|string $refreshToken
+     *
+     * @throws FailedToAuthenticateUserWithRefreshToken
+     */
+    public function authenticateUserWithRefreshToken($refreshToken): AuthenticationResult
+    {
+        $refreshToken = $refreshToken instanceof RefreshToken
+            ? $refreshToken->toString()
+            : $refreshToken;
+
+        return (new AuthenticateUserWithRefreshToken\GuzzleApiClientHandler($this->client))
+            ->handle(AuthenticateUserWithRefreshToken::fromValue($refreshToken));
+    }
+
+    /**
+     * @param string|Email $email
+     * @param string|ClearTextPassword $clearTextPassword
+     *
+     * @throws FailedToAuthenticateUserWithEmailAndClearTextPassword
+     */
+    public function authenticateUserWithEmailAndClearTextPassword($email, $clearTextPassword): AuthenticationResult
+    {
+        $email = $email instanceof Email ? (string) $email : $email;
+        $clearTextPassword = $clearTextPassword instanceof ClearTextPassword ? (string) $clearTextPassword : $clearTextPassword;
+
+        return (new Auth\AuthenticateUserWithEmailAndClearTextPassword\GuzzleApiClientHandler($this->client))
+            ->handle(AuthenticateUserWithEmailAndClearTextPassword::fromValues($email, $clearTextPassword));
+    }
+
+    /**
      * Gets the user ID from the response and queries a full UserRecord object for it.
      *
      * @throws Exception\AuthException
@@ -743,20 +820,5 @@ class Auth
         $uid = JSON::decode((string) $response->getBody(), true)['localId'];
 
         return $this->getUser($uid);
-    }
-
-    private function getIdTokenStringForUserByUid(string $uid): string
-    {
-        $customToken = $this->createCustomToken($uid);
-
-        $response = $this->client->exchangeCustomTokenForIdAndRefreshToken($customToken);
-
-        $data = JSON::decode((string) $response->getBody(), true);
-
-        if ($idToken = $data['idToken'] ?? null) {
-            return (string) $idToken;
-        }
-
-        throw new AuthError("Unable to convert exchange custom token for user with UID {$uid} to an ID token.");
     }
 }
